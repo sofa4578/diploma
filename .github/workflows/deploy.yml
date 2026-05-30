@@ -49,12 +49,11 @@ jobs:
           -var="zone=${{ env.ZONE }}"
 
     - name: Get Redis IP and Auth
-      id: tf_outputs
+      id: tf_outputs   # <--- Цей ID важливий, через нього джоба експортує outputs
       working-directory: ./terraform
       run: |
         # Отримуємо хост Redis
         REDIS_HOST=$(terraform output -raw redis_host)
-        echo "REDIS_HOST=$REDIS_HOST" >> $GITHUB_ENV
         
         # Спроба отримати пароль через Terraform
         REDIS_AUTH=$(terraform output -raw redis_auth)
@@ -67,8 +66,11 @@ jobs:
         
         # Маскуємо пароль для безпеки логів
         echo "::add-mask::$REDIS_AUTH"
-        echo "REDIS_AUTH=$REDIS_AUTH" >> $GITHUB_ENV
-        echo "✅ Redis Host and Auth retrieved successfully."
+        
+        # ВАЖЛИВО: Записуємо в OUTPUT кроку, щоб передати між серверами (Jobs)
+        echo "redis_host=$REDIS_HOST" >> $GITHUB_OUTPUT
+        echo "redis_auth=$REDIS_AUTH" >> $GITHUB_OUTPUT
+        echo "✅ Redis Host and Auth registered in GITHUB_OUTPUT."
 
   # ── Job 2: Build & Push Docker image ──────────────────────────────────────
   build:
