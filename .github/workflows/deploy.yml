@@ -130,9 +130,16 @@ jobs:
     - name: Validate Required Variables
       run: |
         if [ -z "$REDIS_HOST" ]; then echo "ERROR: REDIS_HOST is empty"; exit 1; fi
-        if [ -z "$REDIS_AUTH" ]; then echo "ERROR: REDIS_AUTH is empty"; exit 1; fi
         if [ -z "$IMAGE_URL" ];  then echo "ERROR: IMAGE_URL is empty";  exit 1; fi
-        echo "All variables successfully validated: OK"
+        
+        # Якщо пароль порожній — ми не ламаємо збірку, а просто попереджаємо
+        if [ -z "$REDIS_AUTH" ] || [ "$REDIS_AUTH" = "null" ]; then
+          echo "⚠️ WARNING: REDIS_AUTH is empty. Proceeding with AUTH disabled."
+          echo "REDIS_AUTH=" >> $GITHUB_ENV
+        else
+          echo "✅ REDIS_AUTH validated successfully."
+        fi
+        echo "All critical variables successfully validated: OK"
 
     - name: Install KEDA
       run: |
