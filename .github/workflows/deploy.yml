@@ -48,15 +48,27 @@ jobs:
           -var="region=${{ env.REGION }}" \
           -var="zone=${{ env.ZONE }}"
 
-    - name: Get Terraform Outputs
+    - name: Get Redis IP and Auth
       id: tf_outputs
       working-directory: ./terraform
       run: |
-        echo "redis_host=$(terraform output -raw redis_host)" >> $GITHUB_OUTPUT
-        # Маскуємо пароль у логах
+        # Отримуємо хост Redis
+        REDIS_HOST=$(terraform output -raw redis_host)
+        echo "REDIS_HOST=$REDIS_HOST" >> $GITHUB_ENV
+        
+        # Спроба отримати пароль через Terraform
         REDIS_AUTH=$(terraform output -raw redis_auth)
+        
+        # Якщо Terraform повернув порожньо, беремо напряму з GCP через gcloud
+        if [ -z "$REDIS_AUTH" ] || [ "$REDIS_AUTH" = "null" ]; then
+          echo "⚠️ Terraform auth output is empty. Querying GCP directly..."
+          REDIS_AUTH=$(gcloud redis instances describe diploma-redis --region=${{ env.REGION }} --format='value(authString)')
+        fi
+        
+        # Маскуємо пароль для безпеки логів
         echo "::add-mask::$REDIS_AUTH"
-        echo "redis_auth=$REDIS_AUTH" >> $GITHUB_OUTPUT
+        echo "REDIS_AUTH=$REDIS_AUTH" >> $GITHUB_ENV
+        echo "✅ Redis Host and Auth retrieved successfully."
 
   # ── Job 2: Build & Push Docker image ──────────────────────────────────────
   build:
@@ -118,7 +130,7 @@ jobs:
         if [ -z "$REDIS_HOST" ]; then echo "ERROR: REDIS_HOST is empty"; exit 1; fi
         if [ -z "$REDIS_AUTH" ]; then echo "ERROR: REDIS_AUTH is empty"; exit 1; fi
         if [ -z "$IMAGE_URL" ];  then echo "ERROR: IMAGE_URL is empty";  exit 1; fi
-        echo "All variables OK"
+        echo "All variables successfully validated: OK"
 
     - name: Install KEDA
       run: |
