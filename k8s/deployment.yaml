@@ -27,7 +27,7 @@ spec:
         prometheus.io/port: "8000"
         prometheus.io/path: "/metrics"
     spec:
-      terminationGracePeriodSeconds: 30
+      terminationGracePeriodSeconds: 60
       containers:
       - name: fastapi
         image: ${IMAGE_URL}
@@ -50,7 +50,7 @@ spec:
             memory: "128Mi"
           limits:
             cpu: "1000m"
-            memory: "256Mi"
+            memory: "512Mi"
         livenessProbe:
           httpGet:
             path: /health
@@ -64,7 +64,7 @@ spec:
           httpGet:
             path: /health
             port: 8000
-          initialDelaySeconds: 10
+          initialDelaySeconds: 15
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 3
@@ -73,4 +73,4 @@ spec:
           preStop:
             exec:
               # Даємо поду 5 сек на завершення поточних запитів
-              command: ["/bin/sh", "-c", "sleep 5"]
+              command: ["/bin/sh", "-c", "sleep 15"]

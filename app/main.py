@@ -196,14 +196,15 @@ async def stats():
 
 
 # ── CPU stress — для підходу 1 (CPU-based HPA) ───────────────────────────────
+stress_semaphore = asyncio.Semaphore(3)  # максимум 3 одночасно
 
-@app.get("/stress", tags=["Load Testing"])
+@app.get("/stress")
 async def stress(n: int = 500000):
-    """CPU-важке обчислення. Запускається у ProcessPool — не блокує event loop."""
     if n > 5_000_000:
-        raise HTTPException(status_code=400, detail="n too large, max 5000000")
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(process_pool, _cpu_task, n)
+        raise HTTPException(status_code=400, detail="n too large")
+    async with stress_semaphore:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(process_pool, _cpu_task, n)
     return {"computations": n, "result": round(result, 2)}
 
 
