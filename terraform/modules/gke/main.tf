@@ -65,11 +65,6 @@ resource "google_container_node_pool" "primary_nodes" {
     machine_type    = "e2-standard-2"   # 2 vCPU, 8GB RAM
     service_account = google_service_account.gke_sa.email
     oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
-
-    # Workload Identity — безпечніший спосіб авторизації подів
-    workload_metadata_config {
-      mode = "GKE_METADATA"
-    }
   }
 
   management {
