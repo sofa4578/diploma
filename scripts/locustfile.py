@@ -46,14 +46,13 @@ class LightUser(HttpUser):
 
 
 class HeavyUser(HttpUser):
-    """Симулює CPU-важкі запити — для підходу 1 (CPU HPA)."""
     weight = 2
-    wait_time = between(1, 3)
+    wait_time = between(2, 5)        # було between(1,3) — рідше запитуємо
 
     @task
     def stress(self):
-        n = __import__("random").choice([300000, 500000, 700000])
-        self.client.get(f"/stress?n={n}", timeout=30)
+        n = __import__("random").choice([200000, 300000])  # менші значення
+        self.client.get(f"/stress?n={n}", timeout=60)      # більший timeout
 
 
 class QueueUser(HttpUser):

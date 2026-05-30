@@ -53,8 +53,8 @@ def _connect_redis() -> redis.Redis:
         db=0,
         password=REDIS_PASSWORD if REDIS_PASSWORD else None,
         decode_responses=True,
-        socket_timeout=2,
-        socket_connect_timeout=2,
+        socket_timeout=5,
+        socket_connect_timeout=5,
     )
     client.ping()
     return client
@@ -212,15 +212,17 @@ async def stress(n: int = 500000):
 
 @app.post("/tasks", tags=["Task Queue"])
 async def enqueue_task(payload: str = "default_task"):
-    """Додати задачу у чергу (Redis List). KEDA читає довжину черги."""
     _require_redis()
-    try:
-        task_id = str(uuid.uuid4())[:8]
-        task = json.dumps({"id": task_id, "payload": payload})
-        queue_len = cache.rpush(QUEUE_KEY, task)
-        return {"task_id": task_id, "queue_length": queue_len}
-    except redis.RedisError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+    for attempt in range(3):          # 3 спроби
+        try:
+            task_id = str(uuid.uuid4())[:8]
+            task = json.dumps({"id": task_id, "payload": payload})
+            queue_len = cache.rpush(QUEUE_KEY, task)
+            return {"task_id": task_id, "queue_length": queue_len}
+        except redis.RedisError:
+            if attempt == 2:
+                raise HTTPException(status_code=503, detail="Redis unavailable after retries")
+            await asyncio.sleep(0.1)
 
 
 @app.get("/tasks/process", tags=["Task Queue"])
