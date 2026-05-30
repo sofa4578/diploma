@@ -1,0 +1,180 @@
+
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:            # Ручний запуск з GitHub UI
+
+env:
+  PROJECT_ID: diplomalevko
+  REGION:     us-central1
+  ZONE:       us-central1-a
+
+jobs:
+  # ── Job 1: Terraform — тільки якщо змінились файли інфраструктури ──────────
+  terraform:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    outputs:
+      redis_host: ${{ steps.tf_outputs.outputs.redis_host }}
+      redis_auth: ${{ steps.tf_outputs.outputs.redis_auth }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Authenticate to GCP
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_wrapper: false   # ВАЖЛИВО: без wrapper outputs доступні напряму
+
+    - name: Terraform Init
+      working-directory: ./terraform
+      run: terraform init
+
+    - name: Terraform Validate
+      working-directory: ./terraform
+      run: terraform validate
+
+    - name: Terraform Apply
+      working-directory: ./terraform
+      run: |
+        terraform apply -auto-approve \
+          -var="project_id=${{ env.PROJECT_ID }}" \
+          -var="region=${{ env.REGION }}" \
+          -var="zone=${{ env.ZONE }}"
+
+    - name: Get Terraform Outputs
+      id: tf_outputs
+      working-directory: ./terraform
+      run: |
+        echo "redis_host=$(terraform output -raw redis_host)" >> $GITHUB_OUTPUT
+        # Маскуємо пароль у логах
+        REDIS_AUTH=$(terraform output -raw redis_auth)
+        echo "::add-mask::$REDIS_AUTH"
+        echo "redis_auth=$REDIS_AUTH" >> $GITHUB_OUTPUT
+
+  # ── Job 2: Build & Push Docker image ──────────────────────────────────────
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: terraform
+    outputs:
+      image_url: ${{ steps.build.outputs.image_url }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Authenticate to GCP
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+    - name: Configure Docker for Artifact Registry
+      run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+    - name: Build & Push
+      id: build
+      working-directory: ./app
+      run: |
+        IMAGE_URL="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/diploma-app-repo/fastapi:${{ github.sha }}"
+        docker build -t "$IMAGE_URL" .
+        docker push "$IMAGE_URL"
+        echo "image_url=$IMAGE_URL" >> $GITHUB_OUTPUT
+        echo "Built and pushed: $IMAGE_URL"
+
+  # ── Job 3: Deploy to GKE ───────────────────────────────────────────────────
+  deploy:
+    name: Deploy to GKE
+    runs-on: ubuntu-latest
+    needs: [terraform, build]
+    env:
+      REDIS_HOST: ${{ needs.terraform.outputs.redis_host }}
+      REDIS_AUTH: ${{ needs.terraform.outputs.redis_auth }}
+      IMAGE_URL:  ${{ needs.build.outputs.image_url }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Authenticate to GCP
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+    - name: Install GKE Auth Plugin
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        install_components: gke-gcloud-auth-plugin
+
+    - name: Get GKE Credentials
+      run: |
+        gcloud container clusters get-credentials highload-cluster \
+          --zone ${{ env.ZONE }} --project ${{ env.PROJECT_ID }}
+
+    - name: Validate Required Variables
+      run: |
+        if [ -z "$REDIS_HOST" ]; then echo "ERROR: REDIS_HOST is empty"; exit 1; fi
+        if [ -z "$REDIS_AUTH" ]; then echo "ERROR: REDIS_AUTH is empty"; exit 1; fi
+        if [ -z "$IMAGE_URL" ];  then echo "ERROR: IMAGE_URL is empty";  exit 1; fi
+        echo "All variables OK"
+
+    - name: Install KEDA
+      run: |
+        # Перевіряємо чи KEDA вже встановлено
+        if ! kubectl get namespace keda &>/dev/null; then
+          echo "Installing KEDA..."
+          kubectl apply --server-side \
+            -f https://github.com/kedacore/keda/releases/download/v2.13.1/keda-2.13.1.yaml
+          echo "Waiting for KEDA to be ready..."
+          kubectl rollout status deployment/keda-operator -n keda --timeout=120s
+        else
+          echo "KEDA already installed, skipping"
+        fi
+
+    - name: Install Prometheus (Helm)
+      run: |
+        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+        helm repo update
+        helm upgrade --install prometheus prometheus-community/prometheus \
+          -n monitoring --create-namespace \
+          -f monitoring/prometheus-values.yaml \
+          --wait --timeout 3m
+
+    - name: Apply Kubernetes Manifests
+      working-directory: ./k8s
+      run: |
+        # Namespace спочатку
+        kubectl apply -f namespace.yaml
+
+        # Підстановка змінних через envsubst
+        envsubst < secret.yaml    | kubectl apply -f -
+        envsubst < configmap.yaml | kubectl apply -f -
+        envsubst < deployment.yaml | kubectl apply -f -
+
+        # Статичні маніфести
+        kubectl apply -f service.yaml
+        kubectl apply -f pdb.yaml
+
+        # Підхід 1: CPU HPA (активний за замовчуванням)
+        kubectl apply -f hpa-cpu.yaml
+
+        echo "Deployment applied successfully"
+
+    - name: Wait for Rollout
+      run: |
+        kubectl rollout status deployment/fastapi-app -n prod-apps --timeout=180s
+
+    - name: Print External IP
+      run: |
+        echo "Waiting for LoadBalancer IP..."
+        for i in $(seq 1 20); do
+          IP=$(kubectl get svc fastapi-service -n prod-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+          if [ -n "$IP" ]; then
+            echo "✅ App is live at: http://$IP"
+            break
+          fi
+          echo "Attempt $i/20 — waiting 15s..."
+          sleep 15
+        done

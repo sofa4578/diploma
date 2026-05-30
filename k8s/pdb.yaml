@@ -1,0 +1,12 @@
+
+# PodDisruptionBudget — завжди мінімум 1 под доступний під час оновлень
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fastapi-pdb
+  namespace: prod-apps
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: fastapi

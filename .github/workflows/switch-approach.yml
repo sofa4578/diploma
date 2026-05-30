@@ -1,0 +1,73 @@
+
+name: Switch Scaling Approach
+
+# Дозволяє перемикати підходи масштабування без повного деплою
+on:
+  workflow_dispatch:
+    inputs:
+      approach:
+        description: 'Scaling approach to activate'
+        required: true
+        type: choice
+        options:
+          - cpu-hpa
+          - keda-rps
+          - keda-queue
+
+env:
+  PROJECT_ID: diplomalevko
+  ZONE:       us-central1-a
+
+jobs:
+  switch:
+    name: Switch to ${{ github.event.inputs.approach }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Authenticate to GCP
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+    - name: Install GKE Auth Plugin
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        install_components: gke-gcloud-auth-plugin
+
+    - name: Get GKE Credentials
+      run: |
+        gcloud container clusters get-credentials highload-cluster \
+          --zone ${{ env.ZONE }} --project ${{ env.PROJECT_ID }}
+
+    - name: Remove all existing scalers
+      run: |
+        kubectl delete hpa --all -n prod-apps --ignore-not-found
+        kubectl delete scaledobject --all -n prod-apps --ignore-not-found
+        echo "Cleared all existing scalers"
+
+    - name: Get Redis Host for KEDA queue approach
+      if: github.event.inputs.approach == 'keda-queue'
+      run: |
+        # Потрібен REDIS_HOST для keda-queue.yaml
+        echo "Note: keda-queue.yaml uses REDIS_HOST from configmap"
+
+    - name: Apply selected approach
+      working-directory: ./k8s
+      run: |
+        case "${{ github.event.inputs.approach }}" in
+          cpu-hpa)
+            kubectl apply -f hpa-cpu.yaml
+            echo "✅ Activated: CPU-based HPA (Approach 1)"
+            ;;
+          keda-rps)
+            kubectl apply -f keda-rps.yaml
+            echo "✅ Activated: RPS-based KEDA (Approach 2)"
+            ;;
+          keda-queue)
+            REDIS_HOST=$(kubectl get configmap app-config -n prod-apps -o jsonpath='{.data.REDIS_HOST}')
+            export REDIS_HOST
+            envsubst < keda-queue.yaml | kubectl apply -f -
+            echo "✅ Activated: Queue-based KEDA (Approach 3)"
+            ;;
+        esac

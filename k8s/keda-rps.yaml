@@ -1,0 +1,32 @@
+
+# ═══════════════════════════════════════════════════════════════════
+# ПІДХІД 2: RPS-based Horizontal Pod Autoscaler (KEDA + Prometheus)
+# ───────────────────────────────────────────────────────────────────
+# Тригер: кількість HTTP-запитів > 50 req/s (сумарно по всіх подах)
+# Плюси:  реагує миттєво на трафік, точніший для web-сервісів,
+#         масштабується ДО навантаження, а не після
+# Мінуси: потребує KEDA + Prometheus, складніше налаштовувати
+# Тест:   locust -f scripts/locustfile.py --headless -u 500 -r 50
+# Метрика: http_requests_total генерується prometheus-fastapi-instrumentator
+# ═══════════════════════════════════════════════════════════════════
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: fastapi-keda-rps
+  namespace: prod-apps
+spec:
+  scaleTargetRef:
+    name: fastapi-app
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  cooldownPeriod: 60           # Сек до scale-down після падіння навантаження
+  pollingInterval: 10          # Перевіряємо метрику кожні 10 сек
+  triggers:
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus-server.monitoring.svc.cluster.local:80
+      metricName: http_requests_per_second
+      # Загальний RPS по всіх подах fastapi
+      query: sum(rate(http_requests_total{app="fastapi"}[1m]))
+      threshold: "50"          # Масштабувати якщо > 50 req/s
+      ignoreNullValues: "true"

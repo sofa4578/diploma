@@ -1,0 +1,46 @@
+
+# ═══════════════════════════════════════════════════════════════════
+# ПІДХІД 3: Queue-based Horizontal Pod Autoscaler (KEDA + Redis)
+# ───────────────────────────────────────────────────────────────────
+# Тригер: довжина черги задач у Redis List > 5 повідомлень
+# Плюси:  ідеальний для асинхронних воркерів і batch-обробки,
+#         масштабується точно по кількості задач у черзі,
+#         не залежить від CPU чи HTTP трафіку
+# Мінуси: потребує KEDA, архітектура producer/consumer,
+#         не підходить для синхронних API
+# Тест:   python scripts/queue_producer.py (генерує 100 задач)
+#         або: for i in $(seq 1 50); do curl -X POST "http://<IP>/tasks"; done
+# ═══════════════════════════════════════════════════════════════════
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: fastapi-keda-queue
+  namespace: prod-apps
+spec:
+  scaleTargetRef:
+    name: fastapi-app
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  cooldownPeriod: 30
+  pollingInterval: 5           # Перевіряємо чергу кожні 5 сек (швидша реакція)
+  triggers:
+  - type: redis
+    metadata:
+      address: "${REDIS_HOST}:6379"
+      listName: task_queue      # Redis List key — той самий QUEUE_KEY з main.py
+      listLength: "5"           # 1 под на кожні 5 задач у черзі
+      enableTLS: "false"
+    authenticationRef:
+      name: keda-redis-auth     # TriggerAuthentication з паролем Redis
+---
+# TriggerAuthentication — секрет для KEDA щоб підключитись до Redis
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-redis-auth
+  namespace: prod-apps
+spec:
+  secretTargetRef:
+  - parameter: password
+    name: redis-credentials     # Той самий Secret що і для застосунку
+    key: REDIS_PASSWORD

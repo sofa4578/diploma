@@ -1,0 +1,43 @@
+
+# ═══════════════════════════════════════════════════════════════════
+# ПІДХІД 1: CPU-based Horizontal Pod Autoscaler
+# ───────────────────────────────────────────────────────────────────
+# Тригер: середнє споживання CPU > 50% по всіх подах
+# Плюси:  простота, вбудовано в K8s, не потребує доп. компонентів
+# Мінуси: реагує із затримкою ~30-60 сек, CPU не завжди відображає
+#         реальне навантаження (наприклад, IO-bound запити)
+# Тест:   locust -f scripts/locustfile.py --headless -u 200 -r 20
+#         + curl "http://<IP>/stress?n=500000"
+# ═══════════════════════════════════════════════════════════════════
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fastapi-hpa-cpu
+  namespace: prod-apps
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fastapi-app
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30    # Чекаємо 30 сек перед scale-up
+      policies:
+      - type: Pods
+        value: 2
+        periodSeconds: 60               # Додаємо max 2 поди за хвилину
+    scaleDown:
+      stabilizationWindowSeconds: 120   # Чекаємо 2 хв перед scale-down
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 60

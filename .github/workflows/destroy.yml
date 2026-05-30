@@ -1,0 +1,39 @@
+
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:      # Тільки ручний запуск — щоб випадково не знести!
+
+env:
+  PROJECT_ID: diplomalevko
+  REGION:     us-central1
+  ZONE:       us-central1-a
+
+jobs:
+  destroy:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Authenticate to GCP
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_wrapper: false
+
+    - name: Terraform Init
+      working-directory: ./terraform
+      run: terraform init
+
+    - name: Terraform Destroy
+      working-directory: ./terraform
+      run: |
+        terraform destroy -auto-approve \
+          -var="project_id=${{ env.PROJECT_ID }}" \
+          -var="region=${{ env.REGION }}" \
+          -var="zone=${{ env.ZONE }}"

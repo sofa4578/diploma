@@ -1,0 +1,9 @@
+
+# Значення підставляються через envsubst у CI/CD pipeline
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: prod-apps
+data:
+  REDIS_HOST: "${REDIS_HOST}"

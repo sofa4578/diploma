@@ -1,0 +1,43 @@
+
+# Helm values для встановлення Prometheus у namespace 'monitoring'
+# Команда: helm upgrade --install prometheus prometheus-community/prometheus \
+#           -n monitoring --create-namespace -f monitoring/prometheus-values.yaml
+
+server:
+  persistentVolume:
+    enabled: false              # Для диплому вимикаємо PV (дешевше)
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+# Автоматичний scrape подів з анотаціями prometheus.io/scrape: "true"
+serverFiles:
+  prometheus.yml:
+    scrape_configs:
+    - job_name: fastapi-pods
+      kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [prod-apps]
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: replace
+        target_label: app
+
+alertmanager:
+  enabled: false
+pushgateway:
+  enabled: false

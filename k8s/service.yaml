@@ -1,0 +1,19 @@
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi-service
+  namespace: prod-apps
+  annotations:
+    # Prometheus ServiceMonitor — для підходу 2
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8000"
+spec:
+  type: LoadBalancer
+  selector:
+    app: fastapi
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+      name: http
